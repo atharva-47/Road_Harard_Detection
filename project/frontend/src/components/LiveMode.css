@@ -160,10 +160,13 @@ video {
 .Toastify__toast {
   font-size: 0.9rem;
   border-radius: 4px;
+  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  font-weight: bold;
+  letter-spacing: 0.5px;
 }
 
 .Toastify__toast--warning {
-  background-color: #f1c40f;
+  background: linear-gradient(135deg, #36d1dc, #5b86e5);
   color: #fff;
 }
 
@@ -174,5 +177,10 @@ video {
 
 .Toastify__toast--info {
   background-color: #3498db;
+  color: #fff;
+}
+
+.Toastify__toast--success {
+  background-color: #4caf50;
   color: #fff;
 }

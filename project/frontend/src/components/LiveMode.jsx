@@ -3,6 +3,7 @@ import { toast, ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import './LiveMode.css';
 import HazardNotifier from './HazardNotifier';
+import NearbyHazardNotifier from './NearbyHazardNotifier';
 
 export default function LiveMode() {
   const videoRef = useRef(null);
@@ -12,6 +13,7 @@ export default function LiveMode() {
   const cooldownRef = useRef(null);
   const browserStreamRef = useRef(null);
   const frameIntervalRef = useRef(null);
+  const alertSoundRef = useRef(null);
   const [cameraMode, setCameraMode] = useState('backend'); // 'backend' or 'browser'
   const [isConnected, setIsConnected] = useState(false);
   const [hazardDetected, setHazardDetected] = useState(false);
@@ -19,6 +21,19 @@ export default function LiveMode() {
   const [nearbyPotholes, setNearbyPotholes] = useState([]);
   const nearbyPotholeAlertRef = useRef(null);
   const potholeCheckIntervalRef = useRef(null);
+
+  // Initialize alert sound
+  useEffect(() => {
+    alertSoundRef.current = new Audio('/alert.mp3');
+    alertSoundRef.current.loop = true;
+    
+    return () => {
+      if (alertSoundRef.current) {
+        alertSoundRef.current.pause();
+        alertSoundRef.current = null;
+      }
+    };
+  }, []);
 
   // Get current location
   useEffect(() => {
@@ -71,7 +86,7 @@ export default function LiveMode() {
         // Show alert if there are nearby potholes and we haven't shown one recently
         if (nearby.length > 0 && !nearbyPotholeAlertRef.current) {
           nearbyPotholeAlertRef.current = toast.warning(
-            `⚠️ Drive carefully! ${nearby.length} pothole(s) detected nearby.`, 
+            `⚠️ Drive carefully! potholes detected nearby.`, 
             {
               autoClose: 7000,
               closeOnClick: true,
@@ -260,6 +275,19 @@ export default function LiveMode() {
                 autoClose: false,
                 closeOnClick: false,
                 draggable: false,
+                onOpen: () => {
+                  // Play alert sound when notification appears
+                  if (alertSoundRef.current) {
+                    alertSoundRef.current.play().catch(err => console.error("Error playing sound:", err));
+                  }
+                },
+                onClose: () => {
+                  // Stop alert sound when notification is closed
+                  if (alertSoundRef.current) {
+                    alertSoundRef.current.pause();
+                    alertSoundRef.current.currentTime = 0;
+                  }
+                }
               });
             }
             if (cooldownRef.current) {
@@ -272,6 +300,11 @@ export default function LiveMode() {
                 if (alertRef.current) {
                   toast.dismiss(alertRef.current);
                   alertRef.current = null;
+                  // Stop alert sound when hazard is no longer detected
+                  if (alertSoundRef.current) {
+                    alertSoundRef.current.pause();
+                    alertSoundRef.current.currentTime = 0;
+                  }
                 }
                 cooldownRef.current = null;
               }, 3000);
@@ -330,11 +363,6 @@ export default function LiveMode() {
         clearInterval(frameIntervalRef.current);
       }
       
-      // Clear pothole checking interval
-      if (potholeCheckIntervalRef.current) {
-        clearInterval(potholeCheckIntervalRef.current);
-      }
-      
       // Clean up processed feed image
       const processedImg = document.getElementById('processed-feed');
       if (processedImg) {
@@ -357,10 +385,7 @@ export default function LiveMode() {
     <div className="live-container">
       <h1>Live Road Hazard Detection</h1>
       
-      {/* Connection Status */}
-      <div className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
-        {isConnected ? 'Connected' : 'Disconnected - Trying to reconnect...'}
-      </div>
+      {/* Connection Status removed */}
       
       {/* Camera Toggle Button */}
       <div className="camera-toggle">
@@ -408,6 +433,9 @@ export default function LiveMode() {
         currentLocation={currentLocation}
         onNotificationSent={handleNotificationSent}
       />
+
+      {/* Nearby Hazard Notifier Component */}
+      <NearbyHazardNotifier currentLocation={currentLocation} />
 
       <ToastContainer />
     </div>

@@ -6,6 +6,7 @@ import base64
 from fastapi import WebSocket, WebSocketDisconnect
 from camera_manager import camera_manager
 from model_loader import model
+from config import DETECTION_THRESHOLDS  # Import the thresholds from config
 
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -47,15 +48,18 @@ async def websocket_endpoint(websocket: WebSocket):
                         
                         if frame is not None:
                             # Process the frame with YOLO
-                            results = process_frame_with_model(frame)
+                            results, driver_lane_hazard_count, vis_frame = process_frame_with_model(frame)
                             
                             # Send processed frame and results
-                            _, jpeg = cv2.imencode('.jpg', results[0].plot(), [cv2.IMWRITE_JPEG_QUALITY, 80])
+                            _, jpeg = cv2.imencode('.jpg', vis_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                             await websocket.send_bytes(jpeg.tobytes())
                             
-                            # Count hazards after filtering
-                            hazard_count = len(results[0].boxes.data)
-                            await websocket.send_json({"hazard_count": hazard_count})
+                            # Count all hazards after filtering
+                            total_hazard_count = len(results[0].boxes.data)
+                            await websocket.send_json({
+                                "hazard_count": total_hazard_count,
+                                "driver_lane_hazard_count": driver_lane_hazard_count
+                            })
                         
                         continue
                 
@@ -70,15 +74,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 frame = camera_manager.frame_queue.get()
                 
                 # Process the frame with YOLO
-                results = process_frame_with_model(frame)
+                results, driver_lane_hazard_count, vis_frame = process_frame_with_model(frame)
                 
                 # Send processed frame and results
-                _, jpeg = cv2.imencode('.jpg', results[0].plot(), [cv2.IMWRITE_JPEG_QUALITY, 80])
+                _, jpeg = cv2.imencode('.jpg', vis_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 await websocket.send_bytes(jpeg.tobytes())
                 
-                # Count hazards after filtering
-                hazard_count = len(results[0].boxes.data)
-                await websocket.send_json({"hazard_count": hazard_count})
+                # Send both total and driver lane hazard counts
+                total_hazard_count = len(results[0].boxes.data)
+                await websocket.send_json({
+                    "hazard_count": total_hazard_count,
+                    "driver_lane_hazard_count": driver_lane_hazard_count
+                })
             
             await asyncio.sleep(0.033)
             
@@ -89,6 +96,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
 def process_frame_with_model(frame):
     """Process a frame with the YOLO model and apply filtering"""
+    # Get frame dimensions
+    frame_height, frame_width = frame.shape[:2]
+    
+    # Calculate lane boundaries (middle 50%)
+    left_boundary = int(frame_width * 0.25)
+    right_boundary = int(frame_width * 0.75)
+    
     # Process detection
     results = model.predict(
         frame,
@@ -98,12 +112,22 @@ def process_frame_with_model(frame):
         verbose=False
     )
 
-    # Apply threshold filtering
+    # Apply threshold filtering using values from config
     filtered_results = []
+    driver_lane_hazards = []  # Hazards in the middle 50% (driver's lane)
+    
     for r in results[0].boxes.data:
         x1, y1, x2, y2, conf, cls = r.tolist()
-        if (cls == 0 and conf >= 0.35) or (cls == 1 and conf >= 0.80):
+        cls_int = int(cls)
+        threshold_key = f"class_{cls_int}"
+        
+        if threshold_key in DETECTION_THRESHOLDS and conf >= DETECTION_THRESHOLDS[threshold_key]:
             filtered_results.append(r.unsqueeze(0))
+            
+            # Check if hazard is in driver's lane (middle 50%)
+            box_center_x = (x1 + x2) / 2
+            if left_boundary <= box_center_x <= right_boundary:
+                driver_lane_hazards.append(r.unsqueeze(0))
 
     # Ensure results[0].boxes.data is updated correctly
     if filtered_results:
@@ -111,4 +135,12 @@ def process_frame_with_model(frame):
     else:
         results[0].boxes.data = torch.empty((0, 6))
     
-    return results
+    # Count hazards in driver's lane
+    driver_lane_hazard_count = len(driver_lane_hazards)
+    
+    # Add lane boundaries to the frame for visualization
+    vis_frame = results[0].plot(conf=False, labels=True, boxes=True).copy()
+    cv2.line(vis_frame, (left_boundary, 0), (left_boundary, frame_height), (0, 255, 0), 2)
+    cv2.line(vis_frame, (right_boundary, 0), (right_boundary, frame_height), (0, 255, 0), 2)
+    
+    return results, driver_lane_hazard_count, vis_frame
